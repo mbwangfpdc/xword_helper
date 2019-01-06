@@ -37,14 +37,17 @@ class nlpSolver:
         for word in self.clue:
             synsets = wn.synsets(word)
             self.clue_synsets.append(synsets if synsets else None)
+        print(self.clue_synsets)
         self.syn_idxs = [0] * len(self.clue_synsets)
 
-        self.word_in = word_in
+        self.word_in = word_in.lower()
         self.known_chars = [index for index,char in enumerate(self.word_in) if char != '?']
         # top10 + room for overlaps w/ words in the clue
         self.solutions = [(0, '') for i in range(10 + len(self.clue))]
 
     def gen_solutions(self):
+        feelsgoodman = 0 #DEBUG
+
         for candidate in wn_dict[len(self.word_in)]:
             try:
                 for i in self.known_chars:
@@ -57,7 +60,7 @@ class nlpSolver:
                 continue
             # calc candidate val & poss add to solutions IFF checks passed
             best = max([self.sent_sim(synset) for synset in candidate_syns])
-
+            feelsgoodman += 1 # feelsgood DEBUG OH YEAH
             heappushpop(self.solutions, (best, candidate))
         # end outer for
         # Have 10 solutions
@@ -65,6 +68,12 @@ class nlpSolver:
             popt = heappop(self.solutions)
             toprint = (popt[0], popt[1])
             print(toprint)
+        print("How good does it feel?")
+        print(".")
+        print(".")
+        print(".")
+        print(".")
+        print(feelsgoodman)
 
 
     def weight_factor(self, word):
