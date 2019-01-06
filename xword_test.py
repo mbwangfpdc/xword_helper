@@ -9,8 +9,9 @@ a = wn.synsets('rock')[0]
 
 class TestNLPSolver(unittest.TestCase):
     def __init__(self):
-        self.solver = nlpSolver("Some rock coverings", "????")
-        print(self.solver.sent_sim(a))
+        self.solver = nlpSolver("Ecclesiastical jurisdictions", "?????")
+        self.solver.gen_solutions()
+        # print(self.solver.sent_sim(a))
     def test_close(self):
         pass
 
