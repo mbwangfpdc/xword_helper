@@ -13,16 +13,34 @@ with open('data.json', 'w+') as datafile:
     json.dump(datum, datafile)
 '''
 
-print(len(words.words()))
+all_lemmas = list(wn.all_lemma_names())
 
-woords = list(set([word.lower() for word in words.words()]))
+print(len(all_lemmas))
 
-print(len(woords))
+non_alpha_chars = {}
 
-datum = [[] for i in range(25)]
+GOOD = ["'","_","-","."]
+BAD = ['2', '3', '8', '4', '5', '0', '1', '6', '7', '9', '/']
 
-for word in woords:
-    datum[len(word)].append(word)
+woords = [[] for i in range(65)]
+
+# TODO: woords make into dictionary
+for lemma in all_lemmas:
+    if any(char in lemma for char in BAD):
+        continue
+    elif lemma.isalpha():
+        woords[len(lemma)].append((lemma, None))
+    else:
+        stripped_lemma = lemma
+        for char in GOOD:
+            stripped_lemma = stripped_lemma.replace(char, "")
+        if not stripped_lemma.isalpha():
+            raise ContinueException
+        try:
+            woords[len(stripped_lemma)].append((lemma, stripped_lemma))
+        except IndexError as e:
+            print(e)
+            print(stripped_lemma)
 
 with open('dictionary.json', 'w+') as dictfile:
-    json.dump(datum, dictfile)
+    json.dump(woords, dictfile)
