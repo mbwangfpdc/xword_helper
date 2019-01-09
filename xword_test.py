@@ -6,10 +6,20 @@ import unittest
 a = wn.synsets('rock')[0]
 #b = wn.synsets('memory')[3]
 
+XWORD_TESTS = [
+    "ecclesiastical jurisdiction", "synod",
+    "disarray", "muss",
+    "Big affair", "fete",
+    "Range", "appliance",
+    "ecclesiastical jurisdiction", "synod",
+    "ecclesiastical jurisdiction", "synod",
+    "ecclesiastical jurisdiction", "synod",
+    "ecclesiastical jurisdiction", "synod",
+]
 
 class TestNLPSolver(unittest.TestCase):
     def __init__(self):
-        self.solver = nlpSolver("ecclesiastical jurisdiction", "s????")
+        self.solver = nlpSolver("ecclesiastical jurisdictions", "synod")
         self.solver.gen_solutions()
         # print(self.solver.sent_sim(a))
     def test_close(self):

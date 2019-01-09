@@ -1,12 +1,16 @@
 from nltk.corpus import wordnet as wn
 from nltk.corpus import brown as bn
-# from nltk.corpus import stopwords as sw
+from nltk.corpus import stopwords as sw
+from nltk.stem.snowball import SnowballStemmer
 from nltk import FreqDist
 from copy import deepcopy
 import math
 import json
 import numpy as np
 from heapq import heappush, heappushpop, heappop
+import re
+
+XWORD_PATTERN = re.compile("[^a-zA-Z\-_' ]")
 
 import pprint
 
@@ -22,10 +26,13 @@ THRESHOLD = .2
 FD = data_in['FD']
 BN_LEN = data_in['BN_LEN']
 LOG_BN_LEN = data_in['LOG_BN_LEN']
-#STOPWORDS = set(sw.words('english'))
+STOPWORDS = set(sw.words('english'))
+stemmer = SnowballStemmer("english")
 
-DEBUG = False
-DEBUG_STATE = 'a'
+#TODO: utilize this to eliminate nytimes crossword operator words
+XWORD_OPS = {'e.g.'}
+
+DEBUG_FLAG = '0'
 DEBUG_CHECK_WORD_SCORE = True
 
 def truncate(f, n):
@@ -36,8 +43,31 @@ def truncate(f, n):
     i, p, d = s.partition('.')
     return '.'.join([i, (d+'0'*n)[:n]])
 
+def smart_stem(word):
+    stem = stemmer.stem(word)
+    return stem if FD.get(stem, 0) > FD.get(word, 0) else word
+
+# cleans string input -> synsets for clues, candidates
+def gen_synsets(sentence):
+    synsets = [wn.synsets(w)[0] if wn.synsets(w) else None for w in sentence]
+    #lower
+    #regex simplify
+    #None if is STOPWORDS
+    #None if no synsets
+
+
 class ContinueException(Exception):
     pass
+
+DEBUG_STATE = {
+    "__CANDIDATE__": {
+        "all": ["all", "words"],
+        "clue_score": [0.7, 0.5],
+        "cand_score": [0.5, 0.7],
+        "clue_order": [1, 0],
+        "cand_order": [0, 1],
+    },
+}
 
 class nlpSolver:
     """Hold synsets for clues and candidates"""
@@ -46,16 +76,43 @@ class nlpSolver:
         # self.clue = [w for w in clue.lower().split(" ") if w not in STOPWORDS]
         # TODO prolly need to Morphy() all words in clue
         self.clue = clue.lower().split(" ")
+        self.orig_clue = self.clue
+        self.clue = [smart_stem(w) for w in self.clue]
         self.clue_synsets = []
         for word in self.clue:
             synsets = wn.synsets(word)
             self.clue_synsets.append(synsets[0] if synsets else None)
-        # print(self.clue_synsets)
-
+        # print(self.clue_synsets
         self.word_in = word_in.lower()
         self.known_chars = [index for index,char in enumerate(self.word_in) if char != '?']
         # top10 + room for overlaps w/ words in the clue
         self.solutions = [(0, '') for i in range(10 + len(self.clue))]
+        self.seek_guidance(self.clue, self.clue_synsets)
+        if len(self.clue) == 1:
+            self.clue = XWORD_PATTERN.sub("", self.clue_synsets[0].definition()).lower().split(" ")
+            self.clue_synsets = [wn.synsets(w)[0] if wn.synsets(w) else None for w in self.clue]
+            #FIXME seeking too much guidance
+            self.seek_guidance(self.clue, self.clue_synsets)
+
+        self.current_candidate = None
+
+    def seek_guidance(self, sentence, sent_synsets):
+        while(True):
+            for idx, (w_syn) in enumerate(zip(sentence, sent_synsets)):
+                print("{}: {}... {}".format(idx, w_syn[0], w_syn[1].definition() if w_syn[1] else ""))
+
+            try:
+                word_idx = int(input("\nEnter # of word for which you wish to provide guidance. ('q' to quit)\n"))
+            except ValueError:
+                return
+
+            for idx, syn in enumerate(wn.synsets(sentence[word_idx])):
+                print("{}: {}".format(idx, syn.definition()))
+
+            syn_idx = int(input("\nSelect # of correct redefinition from above\n"))
+
+            sent_synsets[word_idx] = wn.synsets(sentence[word_idx])[syn_idx]
+
 
     def gen_solutions(self):
         feelsgoodman = 0 #DEBUG
@@ -63,6 +120,7 @@ class nlpSolver:
         # (REAL, STRIPPED) e.g. ("mr.big_butt", "mrbigbutt")
         for candidate in wn_dict[len(self.word_in)]:
             candidate_raw = candidate[0]
+            self.current_candidate = candidate_raw
             candidate_stripped = candidate[1] or candidate[0]
             try:
                 for i in self.known_chars:
@@ -85,52 +143,32 @@ class nlpSolver:
             score, solution = heappop(self.solutions)
             toprint = (score, solution)
             print(toprint)
-            if DEBUG_STATE is 'a':
+            '''
+            if DEBUG_FLAG is 'a':
                 # re-find correct synset out of synsets for debugging
                 syn = max(wn.synsets(solution), key=lambda synset: self.sent_sim(synset))
-                soln_def = syn.definition().lower().split(" ")
+                soln_def = XWORD_PATTERN.sub("", syn.definition()).lower().split(" ")
+                soln_def = [smart_stem(w) for w in soln_def]
                 all_words, all_syns = self.gen_all_vecs(soln_def)
                 r1, s1 = self.gen_score_vec(soln_def, [(wn.synsets(w)[0] if wn.synsets(w) else None) for w in soln_def], all_words, all_syns)
                 r2, s2 = self.gen_score_vec(self.clue, self.clue_synsets, all_words, all_syns)
                 s1 = [truncate(fl, 3) for fl in s1]
                 s2 = [truncate(fl, 3) for fl in s2]
-                for score in s1:
-                    print('{:5}'.format(score), end=' ')
-                print()
-                for score in s2:
-                    print('{:5}'.format(score), end=' ')
-                print()
-                for score in r1:
-                    print('{:5}'.format(score), end=' ')
-                print()
-                for score in r2:
-                    print('{:5}'.format(score), end=' ')
-                print()
+                for l in [s1, s2, r1, r2]:
+                    for score in l:
+                        print('{:5}\n'.format(score), end=' ')
                 for w in all_words:
-                    print('{:5}'.format(w[:5]), end=' ')
-                print()
+                    print('{:5}\n)'.format(w[:5]), end=' ')
                 print(all_words)
                 print()
-
+            '''
 
         if DEBUG_CHECK_WORD_SCORE:
-            print("How good does it feel?")
-            print(".")
-            print(".")
-            print(".")
-            print(".")
-            print("{} feelsgoodmen".format(feelsgoodman))
-            print()
-
-            w = 'oreo'
-            s = wn.synsets(w)[0]
-            print(self.weight_factor('oreo'))
-            print(self.sent_sim(s))
-            print(w in wn_dict)
+            print("How good does it feel?\n.\n.\n.\n.\n{} feelsgoodmen\n".format(feelsgoodman))
 
     def weight_factor(self, word):
         #TODO we ran morphy, so need to run INFLECT for opp. direction
-        return 1 - math.log(FD.get(word, 0) + FD.get(wn.morphy(word), 0) + 1) / LOG_BN_LEN
+        return 1 - math.log(FD.get(word, 0) + 1) / LOG_BN_LEN
 
     # takes two synsets
     # FIXME: check for correctness with complete sentence alg
@@ -163,13 +201,23 @@ class nlpSolver:
             syn = wn.synsets(all_words[i])
             all_synsets.append(syn[0] if syn else None)
 
+        if DEBUG_FLAG == 'b':
+            DEBUG_STATE[self.current_candidate] = {}
+            DEBUG_STATE[self.current_candidate]["all"] = zip(all_words, [syn.name() for syn in all_synsets])
+
         return (all_words, all_synsets)
 
+    def semantic_sim(self, score_vec1, score_vec2):
+        return DELTA * ((score_vec1 @ score_vec2) / (np.linalg.norm(score_vec1) * np.linalg.norm(score_vec2)))
+
+    def syntactic_sim(self, order_vec1, order_vec2):
+        return (1 - DELTA) * np.linalg.norm(order_vec1 - order_vec2) / np.linalg.norm(order_vec1 + order_vec2)
 
     def sent_sim(self, candidate_syn):
         # FIXME: possibly elim stopwords
         # candidate_sent = [w for w in candidate_syn.definition().lower().split(" ") if w not in STOPWORDS]
-        candidate_sent = candidate_syn.definition().lower().split(" ")
+        candidate_sent = XWORD_PATTERN.sub("", candidate_syn.definition()).lower().split(" ")
+        candidate_sent = [smart_stem(w) for w in candidate_sent]
 
         all_words, all_synsets = self.gen_all_vecs(candidate_sent)
 
@@ -181,25 +229,16 @@ class nlpSolver:
         candidate_calc = self.gen_score_vec(candidate_sent, candidate_sent_syns, all_words, all_synsets)
         clue_calc = self.gen_score_vec(self.clue, self.clue_synsets, all_words, all_synsets)
 
-        if DEBUG:
-            print(candidate_sent)
-            print()
-            print(all_words)
-            print("Cand_calc")
-            print(candidate_calc)
-            print("Clue_calc")
-            print(clue_calc)
-
-            print(FD["ecclesiastical"])
-            print(FD["jurisdiction"])
-
-        # END DEBUG
-
         candidate_calc = (np.array(candidate_calc[0]), np.array(candidate_calc[1]))
         clue_calc = (np.array(clue_calc[0]), np.array(clue_calc[1]))
 
-        return DELTA * ((candidate_calc[1] @ clue_calc[1]) / (np.linalg.norm(candidate_calc[1]) * np.linalg.norm(clue_calc[1]))) \
-                     * (1 - DELTA) * np.linalg.norm(clue_calc[0] - candidate_calc[0]) / np.linalg.norm(clue_calc[0] + candidate_calc[0])
+        if DEBUG_FLAG == 'b':
+            DEBUG_STATE[self.current_candidate]["clue_score"] = deepcopy(clue_calc[0])
+            DEBUG_STATE[self.current_candidate]["cand_score"] = deepcopy(candidate_calc[0])
+            DEBUG_STATE[self.current_candidate]["clue_order"] = deepcopy(clue_calc[1])
+            DEBUG_STATE[self.current_candidate]["cand_order"] = deepcopy(candidate_calc[1])
+
+        return self.syntactic_sim(candidate_calc[0], clue_calc[0]) + self.semantic_sim(candidate_calc[1], clue_calc[1])
 
     def gen_score_vec(self, sent, sent_syns, all_words, all_syns):
         best_indices = [0] * len(all_words)
@@ -229,32 +268,5 @@ class nlpSolver:
 
         # after calculating score, weight 'em
         for i in range(len(score_vec)):
-            #try:
             score_vec[i] *= weights[all_words[i]] * weights[sent[best_indices[i] - 1]]
-            '''
-            except IndexError:
-                #DEBUG
-                print(score_vec)
-                print(weights)
-                print(all_words)
-                print(best_indices)
-                print(sent)
-                print(i)
-                raise IndexError
-                #DEBUG
-            '''
         return (best_indices, score_vec)
-
-
-
-    '''
-    # old... word -> sentence comparer
-    def old_sent_sim(self, candidate_syn):
-        sim_score = 0
-        for i in range(0, len(self.clue_synsets)):
-            if self.clue_synsets[i] is None:
-                continue
-            sim_score += self.word_sim(self.clue_synsets[i][self.syn_idxs[i]], \
-                         candidate_syn) * self.weight_factor(self.clue[i])
-        return sim_score
-    '''
